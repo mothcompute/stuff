@@ -1,0 +1,101 @@
+#!/bin/sh
+
+#                 _                       _
+#                | |                     | |
+#  _____  _____ _| |_ ____ ____ _____ ___| |
+# /  _  \/ ____|_   _|  _ V _  |  _  |  _  |
+# | |_| |   ___  | | | | | | | | |_| | |_| |
+# \___  |\_____| |_| |_| |_| |_|_____|_____| 
+#   __| | _________________________________
+#  |___/  ---------------------------------
+#  _   _                         _                   _
+# | |_| |                       | |                 | |    _
+# | |-| |___ ____ ____ _____ ___| |_____ ___________| |___|-| _  _ _____
+# | | |  _  |  _ V _  |  _  |  _  |  _  |  ___|  ___|  _  | |\ \/ / ____|
+# | | | |_| | | | | | | |_| | |_| | |_| | |   | |___| | | | | \  /   ___
+# |_|_|_____|_| |_| |_|_____|_____|____/\_|   |_____|_| |_|_|  \/ \_____|
+
+# a simple program (and somewhat of a library) to download modules from the
+# mod archive. provide a filename as the first argument, and a search method
+# (if you want) as the second (see getmodid() for details). by mothcompute.
+# public domain as always. part of https://github.com/mothcompute/stuff
+
+# on bsds you may need to make this `gsed`
+SED=sed
+
+# `penc` takes a single string on argv[1] and outputs
+# its percent-encoded version, followed by a newline,
+# unless argv[1] is '-p', in which case ' ' is encoded
+# as '+'. here is my implementation:
+# int main(int a,char**v){if(a<2)exit(1);int i=0,c;if((a>2)&&!(i=(*((short*)v[1])==28717)))exit(1);while(c=*(v[1+i]++)){if(i&&c==32){c=43;goto p;}if((!((c^32)>>4)&&c!=34&&c!=45&&c!=46)||(c==58||c==59||c==61||c==63||c==64||c==91||c==93))printf("%%%02X",c);else p:putchar(c);}putchar(10);}
+PENC=penc
+
+PLAYER() {
+	which xmp > /dev/null || exit
+	xmp -l $@
+}
+
+which $SED > /dev/null || exit
+which $PENC > /dev/null || exit
+
+# lma_getid(): returns module id
+# $1		: song or filename
+# $2 OPTIONAL	: search type
+# possible values for $2:
+true	DEFAULT: 'filename_or_songtitle' \
+	'filename' \
+	'module_instruments' \
+	'filename_and_songtitle' \
+	'songtitle' \
+	'module_comments'
+lma_getid() {
+	SEARCHTYPE='filename_or_songtitle'
+	[ ! -z "$2" ] && SEARCHTYPE=$2
+
+	curl -s "https://modarchive.org/index.php?request=search&submit=Find&search_type=$SEARCHTYPE&query=$($PENC -p "$1")" | $SED 's/?/ /g;s/ /\n/g' | grep moduleid= | $SED 's/#.*//;s/moduleid=//g' | xargs | awk '{print $1}'
+}
+
+# lma_getname(): returns filename of module
+# $1		: module id
+lma_getname() {
+	curl -s "https://modarchive.org/index.php?request=view_by_moduleid&query=$1" | $SED 's/span/\n/g' | grep module-sub-header | $SED 's/).*//;s/.*(//'
+}
+
+lma_int_gmi() {
+	curl -s "https://modarchive.org/index.php?request=view_by_moduleid&query=$1" | grep -A 8 Info | grep li | grep -v 'ul class=' | $SED "s/<li class=\"stats\">//g;s/<\/li>//g;s/<b>/$(printf '\033')[1m/g;s/<\/b>/$(printf '\033')[0m/g" | grep -v , | $SED 's/ //g;s/times//g;s/:/ /g;s/ModArchive//g'
+}
+
+# lma_getinfo(): gets various information on module
+# $1		: module id
+# $2 OPTIONAL	: search term. if not specified, prints all in 'key value' format
+# possible values for $2:
+true	'ID' \
+	'Downloads' \
+	'Favourited' \
+	'MD5' \
+	'Format' \
+	'Channels' \
+	'UncompressedSize'
+lma_getinfo() {
+	exp() {
+		cat
+	}
+	[ ! -z "$2" ] && exp() {
+		grep $1 | awk '{print $2}'
+	}
+	lma_int_gmi "$1" | exp $2
+}
+
+# lma_getlink(): returns download link to module file
+# $1		: module id
+lma_getlink() {
+	echo "https://api.modarchive.org/downloads.php?moduleid=$1"	
+}
+
+# this serves as a fairly good example of using it as a library
+fetchid=$(lma_getid "$1" "$2")
+fetchname=$(lma_getname $fetchid)
+echo $fetchname
+lma_getinfo $fetchid
+wget -q "$(lma_getlink $fetchid)" -nv -O "$fetchname"
+PLAYER "$fetchname"
