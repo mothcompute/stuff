@@ -1,0 +1,41 @@
+#!/bin/sh
+
+CONFIG=~/nbdl.cfg
+APIEP='https://users.api.nebula.app'
+
+[ -z "$1" ] && echo need nebula video name!
+
+for i in zenity curl jq; do
+	which $i
+	[ ! "$?" = 0 ] && exit
+done
+
+[ ! -f "$CONFIG" ] && touch "$CONFIG" && echo generated config file
+. $CONFIG
+
+curlc="curl -sL"
+
+nblogin() {
+	USRNAME=`zenity --entry --text 'enter your nebula email.'`
+	[ -z "$USRNAME" ] && zenity --error --text='email was blank!' && exit
+	PASSWORD=`zenity --password`
+	[ -z "$PASSWORD" ] && zenity --error --text='password was blank!' && exit
+	TOK=$($curlc -X POST --json "{\"email\":\"$USRNAME\",\"password\":\"$PASSWORD\"}" "$APIEP/api/v1/auth/login/" | jq -r .key)
+	unset USRNAME
+	unset PASSWORD
+	echo saving token \"$TOK\" to "$CONFIG"
+	echo -e "\nTOK=$TOK" >> "$CONFIG"
+}
+
+[ -z "$TOK" ] && nblogin
+
+nbgetbearer() {
+	$curlc -LX POST -H "Authorization: Token $1" $APIEP/api/v1/authorization | jq -r .token
+}
+
+BEARER=$(nbgetbearer $TOK)
+TDATE=$(date +%s)
+echo bearer $BEARER
+$curlc "https://content.api.nebula.app/video/$1/stream/" -H "Authorization: Bearer $BEARER" > "/tmp/$1.neb"
+curl "$(jq -r '.subtitles[0].url' "/tmp/$1.neb")" -o "/tmp/$1.vtt"
+ffplay $(jq -r .download "/tmp/$1.neb") -vf subtitles=filename="/tmp/$1.vtt"
